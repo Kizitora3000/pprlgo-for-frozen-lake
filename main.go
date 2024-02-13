@@ -25,21 +25,6 @@ const (
 )
 
 func main() {
-	// --- set up for Result
-	file, err := os.Create("success_rate.csv")
-	defer file.Close()
-	writer := csv.NewWriter(file)
-	defer writer.Flush()
-	writer.Write([]string{"Episode", "Success Rate"}) // 表頭を記入
-
-	evalFileName := "eval_success_rate.csv"
-	// ファイルが存在する場合は削除 (eval_success_rateはeval関数が呼ばれるたびに追記していく形式なので、プログラム開始時は削除する)
-	if _, err := os.Stat(evalFileName); err == nil {
-		if err := os.Remove(evalFileName); err != nil {
-			panic(err)
-		}
-	}
-
 	// --- set up for RL ---
 	lake := frozenlake.FrozenLake6x6
 	environments := make([]*environment.Environment, MAX_AGENTS)
@@ -49,10 +34,27 @@ func main() {
 		environments[i] = environment.NewEnvironment(lake)
 		agents[i] = agent.NewAgent(environments[i])
 	}
-
 	Agt := agents[0]
+	Env := environments[0]
 
-	params, err := bfv.NewParametersFromLiteral(utils.FAST_BUT_NOT_128_SECURITY) // bfv.PN13QP218 // utils.FAST_BUT_NOT_128_SECURITY
+	// --- set up for Result
+	success_rate_filename := fmt.Sprintf("PPRL_success_rate_%dx%d.csv", Env.Height(), Env.Width())
+	file, err := os.Create(success_rate_filename)
+	defer file.Close()
+	writer := csv.NewWriter(file)
+	defer writer.Flush()
+	writer.Write([]string{"Episode", "Success Rate"}) // 表頭を記入
+
+	eval_rate_filename := fmt.Sprintf("PPRL_eval_greedy_success_rate_%dx%d.csv", Env.Height(), Env.Width())
+	// ファイルが存在する場合は削除 (eval_success_rateはeval関数が呼ばれるたびに追記していく形式なので、プログラム開始時は削除する)
+	if _, err := os.Stat(eval_rate_filename); err == nil {
+		if err := os.Remove(eval_rate_filename); err != nil {
+			panic(err)
+		}
+	}
+
+	// --- set up for bfv
+	params, err := bfv.NewParametersFromLiteral(bfv.PN15QP880) // bfv.PN15QP880 // utils.FAST_BUT_NOT_128_SECURITY
 	if err != nil {
 		panic(err)
 	}
@@ -77,16 +79,6 @@ func main() {
 		PrivateKey: privateKey,
 		PublicKey:  publicKey,
 	}
-
-	/*
-		plaintext := make([]uint64, Agt.GetActionNum())
-		for i := range plaintext {
-			plaintext[i] = 50000 // Agt.InitValQ
-		}
-		ciphertext := doublenc.BFVenc(params, encoder, encryptor, plaintext)
-		fmt.Println(doublenc.BFVdec(bfvKeyTools.Params, bfvKeyTools.Encoder, bfvKeyTools.Decryptor, ciphertext)[0])
-		return
-	*/
 
 	// クラウドのQ値を初期化
 	encryptedQtable := make([]*rlwe.Ciphertext, Agt.GetStateNum())
@@ -115,8 +107,8 @@ func main() {
 			state := env.Reset()
 			for {
 				// action := agt.ChooseRandomAction()
-				action := agt.EpsilonGreedyAction(state)
-				// action := agt.SecureEpsilonGreedyAction(state, testContext, encryptedQtable, user_list)
+				// action := agt.EpsilonGreedyAction(state)
+				action := agt.SecureEpsilonGreedyAction(state, bfvKeyTools, encryptedQtable)
 
 				next_state, reward, done := env.Step(action)
 				agt.Learn(state, action, reward, next_state, bfvKeyTools, encryptedQtable)
@@ -136,11 +128,9 @@ func main() {
 			goal_rate := goal_count / float64(all_agt_eps)
 			writer.Write([]string{fmt.Sprintf("%d", int(episode)), fmt.Sprintf("%.2f", goal_rate)})
 
-			/*
-				if episode%4 == 0 {
-					evaluateGreedyActionAtEpisodes(episode, env, agt)
-				}
-			*/
+			if episode%4 == 0 {
+				evaluateGreedyActionAtEpisodes(episode, env, agt)
+			}
 		}
 	}
 	fmt.Println()
@@ -148,8 +138,8 @@ func main() {
 	// その他デバッグ情報の表示
 	agents[0].ShowQTable()
 	// agents[0].ShowOptimalPath(environments[0])
-	ShowDecryptedQTable(agents[0], encryptedQtable, bfvKeyTools.Params, bfvKeyTools.Encoder, bfvKeyTools.Decryptor)
-	fmt.Println(calcMSE(agents[0], encryptedQtable, bfvKeyTools.Params, bfvKeyTools.Encoder, bfvKeyTools.Decryptor))
+	// ShowDecryptedQTable(agents[0], encryptedQtable, bfvKeyTools.Params, bfvKeyTools.Encoder, bfvKeyTools.Decryptor)
+	// fmt.Println(calcMSE(agents[0], encryptedQtable, bfvKeyTools.Params, bfvKeyTools.Encoder, bfvKeyTools.Decryptor))
 }
 
 func calcMSE(agt *agent.Agent, encryptedQtable []*rlwe.Ciphertext, params bfv.Parameters, encoder bfv.Encoder, decryptor rlwe.Decryptor) float64 {
@@ -191,10 +181,11 @@ func ShowDecryptedQTable(agt *agent.Agent, encryptedQtable []*rlwe.Ciphertext, p
 		// ここで復号プロセスを実行
 		decryptedValue := doublenc.BFVdec(params, encoder, decryptor, encryptedValue)
 		decryptedValue_float64 := make([]float64, 4)
+
+		// [0, 2N] -> [-N, N] +  係数の除去
 		for j := 0; j < 4; j++ {
 			Q_new_int64 := utils.UnmapInteger(decryptedValue[j])
 			decryptedValue_float64[j] = float64(Q_new_int64) / utils.Q_int_coeff
-
 		}
 		// 復号された値を表示
 		height := int(math.Sqrt(float64(agt.GetStateNum())))
@@ -206,7 +197,8 @@ func ShowDecryptedQTable(agt *agent.Agent, encryptedQtable []*rlwe.Ciphertext, p
 
 func evaluateGreedyActionAtEpisodes(now_episode int, env *environment.Environment, agt *agent.Agent) {
 	// ファイルを追記モードで開く（ファイルが存在しない場合は新しく作成）
-	file, err := os.OpenFile("eval_success_rate.csv", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	eval_rate_filename := fmt.Sprintf("PPRL_eval_greedy_success_rate_%dx%d.csv", env.Height(), env.Width())
+	file, err := os.OpenFile(eval_rate_filename, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		panic(err)
 	}

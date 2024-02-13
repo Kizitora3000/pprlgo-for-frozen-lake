@@ -224,3 +224,39 @@ func SecureQtableUpdatingWithBFV(params bfv.Parameters, encoder bfv.Encoder, enc
 
 	return
 }
+
+func SecureActionSelectionWithBFV(params bfv.Parameters, encoder bfv.Encoder, encryptor rlwe.Encryptor, decryptor rlwe.Decryptor, evaluator bfv.Evaluator, publicKey *rsa.PublicKey, privateKey *rsa.PrivateKey, v_t []float64, Nv int, Na int, EncryptedQtable []*rlwe.Ciphertext) *rlwe.Ciphertext {
+	VtName := "VtName"
+	temp := make([][][]uint8, Nv)
+
+	// 確か v = [0, 1, 0, ..., 0] という形を，転置して行動数分用意している
+	// v_0 = [0, 0, 0, ..., 0]
+	// v_1 = [1, 1, 1, ..., 1]
+	// v_2 = [0, 0, 0, ..., 0]
+	for i := 0; i < Nv; i++ {
+		filename := fmt.Sprintf(VtName+"_%d", i)
+		if v_t[i] == 0 {
+			zeros := make([]uint64, Na)
+			temp[i] = doublenc.DEencBFV(params, encoder, encryptor, publicKey, zeros, filename)
+		} else if v_t[i] == 1 {
+			ones := make([]uint64, Na)
+			for i := range ones {
+				ones[i] = 1
+			}
+			temp[i] = doublenc.DEencBFV(params, encoder, encryptor, publicKey, ones, filename)
+		}
+	}
+
+	zeros := make([]uint64, Na)
+	result := doublenc.BFVenc(params, encoder, encryptor, zeros)
+	for i := 0; i < Nv; i++ {
+		vt := doublenc.RSAdec2(privateKey, temp[i])
+
+		vt = evaluator.MulNew(vt, EncryptedQtable[i])
+		evaluator.Relinearize(vt, vt)
+
+		result = evaluator.AddNew(result, vt)
+	}
+
+	return result
+}

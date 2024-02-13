@@ -3,6 +3,7 @@ package agent
 import (
 	"fmt"
 	"math/rand"
+	"pprlgoFrozenLake/doublenc"
 	"pprlgoFrozenLake/environment"
 	"pprlgoFrozenLake/party"
 	"pprlgoFrozenLake/position"
@@ -125,7 +126,6 @@ func (a *Agent) EpsilonGreedyAction(state position.Position) int {
 	return maxAction
 }
 
-/*
 // εグリーディー方策(クラウド上のQテーブルから選択)
 func (a *Agent) SecureEpsilonGreedyAction(state position.Position, keyTools party.BfvKeyTools, encryptedQtable []*rlwe.Ciphertext) int {
 	// εより小さいランダムな値を生成してランダムに行動を選択
@@ -139,14 +139,22 @@ func (a *Agent) SecureEpsilonGreedyAction(state position.Position, keyTools part
 
 	// 最大のQ値を持つ行動を選択
 	// actions_Q_in_state := pprl.SecureActionSelection(v_t, a.stateNum, a.actionNum, testContext, encryptedQtable, user_list)
-	actions_Q_in_state := pprl.SecureActionSelection(keyTools.Params, keyTools.Encoder, keyTools.Encryptor, keyTools.Decryptor, keyTools.Evaluator, keyTools.PublicKey, keyTools.PrivateKey, v_t, a.stateNum, a.actionNumm)
-	actions_Q_in_state_msg := testContext.Decryptor.Decrypt(actions_Q_in_state, testContext.SkSet)
+	actions_Q_in_state := pprl.SecureActionSelectionWithBFV(keyTools.Params, keyTools.Encoder, keyTools.Encryptor, keyTools.Decryptor, keyTools.Evaluator, keyTools.PublicKey, keyTools.PrivateKey, v_t, a.stateNum, a.actionNum, encryptedQtable)
+	actions_Q_in_state_msg := doublenc.BFVdec(keyTools.Params, keyTools.Encoder, keyTools.Decryptor, actions_Q_in_state)
+
+	actions_Q_in_state_float64 := make([]float64, a.actionNum)
+
+	// [0, 2N] -> [-N, N] +  係数の除去
+	for idx := 0; idx < a.actionNum; idx++ {
+		Q_new_int64 := utils.UnmapInteger(actions_Q_in_state_msg[idx])
+		actions_Q_in_state_float64[idx] = float64(Q_new_int64) / utils.Q_int_coeff
+	}
 
 	maxAction := 0
-	maxQValue := real(actions_Q_in_state_msg.Value[0]) // 実部だけ抽出
+	maxQValue := actions_Q_in_state_float64[0]
 
-	for idx := 0; idx < actions_Q_in_state_msg.Slots(); idx++ {
-		qValue := real(actions_Q_in_state_msg.Value[idx]) // 実部だけ抽出
+	for idx := 0; idx < a.actionNum; idx++ {
+		qValue := actions_Q_in_state_float64[idx]
 		if qValue > maxQValue {
 			maxAction = idx
 			maxQValue = qValue
@@ -155,7 +163,6 @@ func (a *Agent) SecureEpsilonGreedyAction(state position.Position, keyTools part
 
 	return maxAction
 }
-*/
 
 // 貪欲方策
 func (a *Agent) GreedyAction(state position.Position) int {

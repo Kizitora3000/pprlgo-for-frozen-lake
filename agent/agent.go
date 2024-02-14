@@ -77,9 +77,6 @@ func (e *Agent) Learn(state position.Position, act int, rwd int, next_state posi
 	Qnew := e.Qtable[state_1D][act]
 	Qnew_int := int64(Qnew * utils.Q_int_coeff)
 	Q_new_uint64 := utils.MapInteger(int64(Qnew_int))
-	// a := utils.UnmapInteger(Q_new_uint64)
-	// b := a / utils.Q_int_coeff
-	// fmt.Println(Qnew, Qnew_int, Q_new_uint64, b)
 	pprl.SecureQtableUpdatingWithBFV(keyTools.Params, keyTools.Encoder, keyTools.Encryptor, keyTools.Decryptor, keyTools.Evaluator, keyTools.PublicKey, keyTools.PrivateKey, v_t, w_t, Q_new_uint64, e.stateNum, e.actionNum, encryptedQtable)
 }
 
@@ -100,7 +97,6 @@ func (e *Agent) convert2DTo1D(state position.Position) int {
 
 // ランダムに行動を選択
 func (a *Agent) ChooseRandomAction() int {
-	rand.New(rand.NewSource(0))
 	return rand.Intn(a.actionNum) // 0からactionNum-1までの範囲でランダムに整数を返す
 }
 

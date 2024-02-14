@@ -3,7 +3,7 @@ package utils
 import "github.com/tuneinsight/lattigo/v4/bfv"
 
 const N = 10000
-const Q_int_coeff = 100.0 // Q_int = Q_new * Q_int_coeff
+const Q_int_coeff = 1000.0 // Q_int = Q_new * Q_int_coeff
 
 var (
 	FAST_BUT_NOT_128_SECURITY = bfv.ParametersLiteral{

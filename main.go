@@ -4,8 +4,10 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/csv"
+	"flag"
 	"fmt"
 	"math"
+	mrand "math/rand" // crypto/randとの名前衝突を避けるためmath/randにエイリアスmrandを適用
 	"os"
 	"pprlgoFrozenLake/agent"
 	"pprlgoFrozenLake/doublenc"
@@ -19,14 +21,43 @@ import (
 )
 
 const (
-	EPISODES   = 200
+	EPISODES   = 1000
 	MAX_USERS  = 2             // MAX_USERS = cloud + agents
 	MAX_AGENTS = MAX_USERS - 1 // agents = MAX_USERS - cloud
 )
 
 func main() {
-	// --- set up for RL ---
-	lake := frozenlake.FrozenLake6x6
+	// agent.ChooseRandomAction()やagent.EpsilonGreedyAction()で使用する乱数値を固定
+	// 補足：rand.Seedはグローバルな乱数生成器のため、意図せず他のプログラムの乱数生成も固定してしまう可能性がある
+	// 　　　rand.New(rand.NewSource(0))はローカルな乱数生成器のため、プログラムごとに乱数生成を固定でき、他のプログラムに影響を与えない
+	// 　　　しかし、今回はプログラム全体で乱数を固定したいので、rand.Seedを使用する
+	mrand.Seed(0)
+
+	// コマンドライン引数でマップのサイズを指定
+	map_size := flag.String("s", "", "Size of the Frozen Lake map (options: 4x4, 5x5, 6x6)")
+	flag.Parse()
+
+	// `s`オプションが指定されているかチェック。指定されていなければ終了
+	if *map_size == "" {
+		fmt.Println("Error: The -s option is required.")
+		os.Exit(1)
+	}
+
+	var lake frozenlake.FrozenLake
+	switch *map_size {
+	case "3x3":
+		lake = frozenlake.FrozenLake3x3
+	case "4x4":
+		lake = frozenlake.FrozenLake4x4
+	case "5x5":
+		lake = frozenlake.FrozenLake5x5
+	case "6x6":
+		lake = frozenlake.FrozenLake6x6
+	default:
+		fmt.Println("Invalid map size. Please choose from 4x4, 5x5, or 6x6.")
+		os.Exit(1)
+	}
+
 	environments := make([]*environment.Environment, MAX_AGENTS)
 	agents := make([]*agent.Agent, MAX_AGENTS)
 
@@ -54,7 +85,7 @@ func main() {
 	}
 
 	// --- set up for bfv
-	params, err := bfv.NewParametersFromLiteral(bfv.PN15QP880) // bfv.PN15QP880 // utils.FAST_BUT_NOT_128_SECURITY
+	params, err := bfv.NewParametersFromLiteral(utils.FAST_BUT_NOT_128_SECURITY) // bfv.PN15QP880 // utils.FAST_BUT_NOT_128_SECURITY
 	if err != nil {
 		panic(err)
 	}
@@ -243,7 +274,7 @@ func evaluateGreedyActionAtEpisodes(now_episode int, env *environment.Environmen
 	}
 
 	goalRate := float64(goal_count) / float64(trials) * 100.0
-	fmt.Printf("Greedy Action Goal Rate: %.2f%%\n", goalRate)
+	// fmt.Printf("Greedy Action Goal Rate: %.2f%%\n", goalRate)
 
 	writer.Write([]string{fmt.Sprintf("%d", int(now_episode)), fmt.Sprintf("%.2f", goalRate)})
 }

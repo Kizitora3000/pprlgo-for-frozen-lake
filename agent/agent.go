@@ -60,6 +60,16 @@ func NewAgent(env *environment.Environment) *Agent {
 	}
 }
 
+func (a *Agent) QtableReset(env *environment.Environment) {
+	// Qtable[stateNum][actionNum]の二次元配列を作成してInitValQで初期化
+	for i := range a.Qtable {
+		a.Qtable[i] = make([]float64, a.actionNum)
+		for j := range a.Qtable[i] {
+			a.Qtable[i][j] = INITIAL_VAL_Q
+		}
+	}
+}
+
 func (e *Agent) Learn(state position.Position, act int, rwd int, next_state position.Position, keyTools party.BfvKeyTools, encryptedQtable []*rlwe.Ciphertext) {
 	state_1D := e.convert2DTo1D(state)
 	next_state_1D := e.convert2DTo1D(next_state)

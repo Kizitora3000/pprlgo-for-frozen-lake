@@ -21,9 +21,10 @@ import (
 )
 
 const (
-	EPISODES   = 1000
+	EPISODES   = 200
 	MAX_USERS  = 2             // MAX_USERS = cloud + agents
 	MAX_AGENTS = MAX_USERS - 1 // agents = MAX_USERS - cloud
+	MAX_TRIALS = 4
 )
 
 func main() {
@@ -111,59 +112,98 @@ func main() {
 		PublicKey:  publicKey,
 	}
 
-	// クラウドのQ値を初期化
-	encryptedQtable := make([]*rlwe.Ciphertext, Agt.GetStateNum())
-	for i := 0; i < Agt.GetStateNum(); i++ {
-		plaintext := make([]uint64, Agt.GetActionNum())
-		for i := range plaintext {
-			plaintext[i] = 0 // Agt.InitValQ
-		}
-
-		ciphertext := doublenc.BFVenc(params, encoder, encryptor, plaintext)
-		encryptedQtable[i] = ciphertext
-	}
-
 	// ---PPRL ---
-	goal_count := 0.0
-	all_agt_eps := 0 // 各エージェントの試行回数の総計
-	for episode := 0; episode <= EPISODES; episode++ {
-		// 学習の進捗率を表示
-		progress := float64(episode) / float64(EPISODES) * 100
-		fmt.Printf("\rTraining Progress: %.1f%% (%d/%d)", progress, episode, EPISODES)
+	var success_rate_per_episode = make([][]float64, MAX_TRIALS)
+	for trial := 0; trial < MAX_TRIALS; trial++ {
+		goal_count := 0.0
+		all_agt_eps := 0 // 各エージェントの試行回数の総計
 
 		for agent_idx := 0; agent_idx < MAX_AGENTS; agent_idx++ {
-			env := environments[agent_idx]
-			agt := agents[agent_idx]
+			agents[agent_idx].QtableReset(environments[agent_idx])
+		}
 
-			state := env.Reset()
-			for {
-				// action := agt.ChooseRandomAction()
-				// action := agt.EpsilonGreedyAction(state)
-				action := agt.SecureEpsilonGreedyAction(state, bfvKeyTools, encryptedQtable)
-
-				next_state, reward, done := env.Step(action)
-				agt.Learn(state, action, reward, next_state, bfvKeyTools, encryptedQtable)
-
-				if done {
-					if next_state == env.GoalPos {
-						goal_count++
-					}
-					all_agt_eps++
-
-					break
-				}
-				state = next_state
+		// 試行ごとにクラウドのQ値を初期化
+		// 各エージェントの状態数・行動数は同一のため、いずれのagentsを用いて初期化しても問題ない。今回は代表としてagents[0]を使用する
+		encryptedQtable := make([]*rlwe.Ciphertext, Agt.GetStateNum())
+		for i := 0; i < Agt.GetStateNum(); i++ {
+			plaintext := make([]uint64, Agt.GetActionNum())
+			for i := range plaintext {
+				plaintext[i] = 0 // Agt.InitValQ
 			}
 
-			// 成功率を算出してcsvに出力
-			goal_rate := goal_count / float64(all_agt_eps)
-			writer.Write([]string{fmt.Sprintf("%d", int(episode)), fmt.Sprintf("%.2f", goal_rate)})
+			ciphertext := doublenc.BFVenc(params, encoder, encryptor, plaintext)
+			encryptedQtable[i] = ciphertext
+		}
 
-			if episode%4 == 0 {
-				evaluateGreedyActionAtEpisodes(episode, env, agt)
+		for episode := 0; episode <= EPISODES; episode++ {
+			// 学習の進捗率を表示
+			progress := float64(episode) / float64(EPISODES) * 100
+			fmt.Printf("\rTraining Progress (Trial - %d/%d): %.1f%% (%d/%d)", trial, MAX_TRIALS, progress, episode, EPISODES)
+
+			for agent_idx := 0; agent_idx < MAX_AGENTS; agent_idx++ {
+				env := environments[agent_idx]
+				agt := agents[agent_idx]
+
+				state := env.Reset()
+				for {
+					action := agt.SecureEpsilonGreedyAction(state, bfvKeyTools, encryptedQtable)
+
+					next_state, reward, done := env.Step(action)
+					agt.Learn(state, action, reward, next_state, bfvKeyTools, encryptedQtable)
+
+					if done {
+						if next_state == env.GoalPos {
+							goal_count++
+						}
+						all_agt_eps++
+
+						break
+					}
+					state = next_state
+				}
+
+				// 成功率を算出してcsvに出力
+				goal_rate := goal_count / float64(all_agt_eps)
+				writer.Write([]string{fmt.Sprintf("%d", int(episode)), fmt.Sprintf("%.2f", goal_rate)})
+
+				/*
+					if episode%4 == 0 {
+						evaluateGreedyActionAtEpisodes(episode, env, agt)
+					}
+				*/
+				success_rate_per_episode[trial] = append(success_rate_per_episode[trial], goal_rate)
 			}
 		}
 	}
+
+	// 成功率の平均値を計算
+	average_success_rates := make([]float64, EPISODES+1)
+	fmt.Println(len(success_rate_per_episode))
+	for _, goal_rates := range success_rate_per_episode {
+		for episode, goal_rate := range goal_rates {
+			average_success_rates[episode] += goal_rate / float64(MAX_TRIALS)
+		}
+	}
+
+	// 平均成功率をCSVに書き出す
+	average_successl_rate_filename := fmt.Sprintf("PPRL_average_success_rate_%dx%d.csv", environments[0].Height(), environments[0].Width())
+	average_file, err := os.Create(average_successl_rate_filename)
+	if err != nil {
+		panic(err)
+	}
+	defer file.Close()
+
+	average_writer := csv.NewWriter(average_file)
+	defer average_writer.Flush()
+
+	// ヘッダーを書き込む
+	average_writer.Write([]string{"Episode", "Average Success Rate"})
+
+	// データを書き込む
+	for episode, average_success_rate := range average_success_rates {
+		average_writer.Write([]string{fmt.Sprintf("%d", episode), fmt.Sprintf("%.2f", average_success_rate)})
+	}
+
 	fmt.Println()
 
 	// その他デバッグ情報の表示
